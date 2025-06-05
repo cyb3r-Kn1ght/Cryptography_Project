@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Web Nghe Nhạc</title>
+</head>
+<body>
+    <h1>Danh sách bài nhạc</h1>
+    {% for file in music_files %}
+        <div>
+            <p>{{ file }}</p>
+            <audio controls>
+                <source src="{{ url_for('play_music', filename=file) }}" type="audio/mpeg">
+                Trình duyệt của bạn không hỗ trợ audio.
+            </audio>
+        </div>
+    {% endfor %}
+</body>
+</html>
