@@ -5,7 +5,8 @@ app = Flask(__name__)
 
 @app.route('/')
 def index():
-    music_files = os.listdir("static/music")
+    music_dir = os.path.join(app.root_path, '..', 'static', 'music')
+    music_files = os.listdir(music_dir)
     return render_template("index.html", music_files=music_files)
 
 @app.route('/music/<filename>')
