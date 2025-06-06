@@ -32,3 +32,9 @@ def compute_shared_secret(server_priv_key, client_pub_bytes):
     )
     shared_secret = server_priv_key.exchange(ec.ECDH(), client_pub_key)
     return shared_secret
+
+def get_ecdsa_public_key_bytes():
+    return ecdsa_public_key.public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )

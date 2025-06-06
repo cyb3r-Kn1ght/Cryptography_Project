@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html lang="vi">
+
 <head>
     <meta charset="UTF-8">
     <title>Web Nghe Nhạc</title>
     <link rel="stylesheet" href="../static/style/musicpage.css">
 </head>
+
 <body>
     <h1>🎵 Danh sách bài nhạc 🎵</h1>
 
@@ -20,7 +22,101 @@
         {% endfor %}
     </div>
     {% if role == 'artist' %}
-  <a href="/upload">Upload Music</a>
+    <a href="/upload">Upload Music</a>
     {% endif %}
+    <script>
+        async function hexToArrayBuffer(hex) {
+            const bytes = new Uint8Array(hex.length / 2);
+            for (let i = 0; i < bytes.length; i++) {
+                bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+            }
+            return bytes.buffer;
+        }
+
+        async function arrayBufferToHex(buffer) {
+            return Array.from(new Uint8Array(buffer))
+                .map(b => b.toString(16).padStart(2, '0'))
+                .join('');
+        }
+
+        async function main() {
+            const res = await fetch("/key-exchange");
+            const {
+                server_pubkey_ecdhe,
+                signature,
+                server_pubkey_ecdsa
+            } = await res.json();
+
+            const ecdheBuf = await hexToArrayBuffer(server_pubkey_ecdhe);
+            const sigBuf = await hexToArrayBuffer(signature);
+            const ecdsaBuf = await hexToArrayBuffer(server_pubkey_ecdsa);
+
+            // 1. Import ECDSA public key từ raw
+            const serverECDSAPubKey = await crypto.subtle.importKey(
+                "spki", // chuẩn X.509
+                ecdsaBuf,
+                { name: "ECDSA", namedCurve: "P-256" },
+                true,
+                ["verify"]
+            );
+
+            // 2. Xác minh chữ ký
+            const verified = await crypto.subtle.verify(
+                { name: "ECDSA", hash: "SHA-256" },
+                serverECDSAPubKey,
+                sigBuf,
+                ecdheBuf
+            );
+
+            if (!verified) {
+                alert("❌ Chữ ký của server không hợp lệ");
+                return;
+            }
+
+            console.log("✅ Server signature verified");
+
+            // 3. Import public key ECDHE
+            const serverECDHPubKey = await crypto.subtle.importKey(
+                "raw",
+                ecdheBuf,
+                { name: "ECDH", namedCurve: "P-256" },
+                true,
+                []
+            );
+
+            // 4. Tạo keypair ECDHE phía client
+            const clientKeys = await crypto.subtle.generateKey(
+                { name: "ECDH", namedCurve: "P-256" },
+                true,
+                ["deriveBits"]
+            );
+
+            // 5. Tính shared secret
+            const sharedSecret = await crypto.subtle.deriveBits(
+                {
+                    name: "ECDH",
+                    public: serverECDHPubKey
+                },
+                clientKeys.privateKey,
+                256
+            );
+
+            console.log("🔐 Shared secret (client):", await arrayBufferToHex(sharedSecret));
+
+            // 6. Gửi public key client lên server
+            const clientPubRaw = await crypto.subtle.exportKey("raw", clientKeys.publicKey);
+            const clientPubHex = await arrayBufferToHex(clientPubRaw);
+
+            await fetch("/submit-client-key", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ client_pubkey_ecdhe: clientPubHex })
+            });
+        }
+
+        main();
+    </script>
+
 </body>
+
 </html>
