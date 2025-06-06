@@ -1,18 +1,23 @@
 <!DOCTYPE html>
-<html>
+<html lang="vi">
 <head>
+    <meta charset="UTF-8">
     <title>Web Nghe Nhạc</title>
+    <link rel="stylesheet" href="../static/style/musicpage.css">
 </head>
 <body>
-    <h1>Danh sách bài nhạc</h1>
-    {% for file in music_files %}
-        <div>
-            <p>{{ file }}</p>
+    <h1>🎵 Danh sách bài nhạc 🎵</h1>
+
+    <div class="music-list">
+        {% for file in music_files %}
+        <div class="music-card">
+            <p class="music-title">{{ file }}</p>
             <audio controls>
                 <source src="{{ url_for('play_music', filename=file) }}" type="audio/mpeg">
                 Trình duyệt của bạn không hỗ trợ audio.
             </audio>
         </div>
-    {% endfor %}
+        {% endfor %}
+    </div>
 </body>
 </html>
