@@ -1,4 +1,4 @@
-from flask import Flask, render_template, send_from_directory, request, jsonify, redirect, url_for
+from flask import Flask, render_template, send_from_directory, request, jsonify, redirect, url_for, session
 import os
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
@@ -10,10 +10,10 @@ from crypto_utils import (
     compute_shared_secret
 )
 
-
 load_dotenv()
 
 app = Flask(__name__)
+app.secret_key = os.urandom(24)
 
 # Kết nối DB
 engine = create_engine(os.getenv("DB_URL"))
@@ -35,10 +35,12 @@ def login_page():
         try:
             with engine.connect() as conn:
                 result = conn.execute(text("""
-                    SELECT password_hash FROM users WHERE username = :username
+                    SELECT password_hash, role FROM users WHERE username = :username
                 """), {"username": username}).fetchone()
 
                 if result and verify_password(result[0], password):
+                    session["username"] = username
+                    session["role"] = result[1]
                     return redirect(url_for('index'))
                 else:
                     return "Invalid credentials", 401
@@ -54,17 +56,19 @@ def register_page():
         username = request.form["username"]
         email = request.form["email"]
         password = request.form["password"]
+        role = request.form.get("role", "user")  # user hoặc artist
         password_hash = hash_password(password)
 
         try:
             with engine.begin() as conn:
                 conn.execute(text("""
-                    INSERT INTO users (username, email, password_hash)
-                    VALUES (:username, :email, :password_hash)
+                    INSERT INTO users (username, email, password_hash, role)
+                    VALUES (:username, :email, :password_hash, :role)
                 """), {
                     "username": username,
                     "email": email,
-                    "password_hash": password_hash
+                    "password_hash": password_hash,
+                    "role": role
                 })
             return redirect(url_for('login_page'))
         except Exception as e:
@@ -77,17 +81,19 @@ def register():
     username = data["username"]
     email = data["email"]
     password = data["password"]
+    role = data.get("role", "user")
     password_hash = hash_password(password)
 
     try:
         with engine.begin() as conn:
             conn.execute(text("""
-                INSERT INTO users (username, email, password_hash)
-                VALUES (:username, :email, :password_hash)
+                INSERT INTO users (username, email, password_hash, role)
+                VALUES (:username, :email, :password_hash, :role)
             """), {
                 "username": username,
                 "email": email,
-                "password_hash": password_hash
+                "password_hash": password_hash,
+                "role": role
             })
         return jsonify({"status": "success"})
     except Exception as e:
@@ -103,11 +109,11 @@ def login():
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT password_hash FROM users WHERE username = :username
+                SELECT password_hash, role FROM users WHERE username = :username
             """), {"username": username}).fetchone()
 
             if result and verify_password(result[0], password):
-                return jsonify({"status": "success"})
+                return jsonify({"status": "success", "role": result[1]})
             else:
                 return jsonify({"status": "error", "message": "Invalid credentials"}), 401
     except Exception as e:
@@ -121,10 +127,27 @@ def play_music(filename):
 # Trang index để liệt kê nhạc (sau khi đăng nhập)
 @app.route('/music_list')
 def index():
+    if "username" not in session:
+        return redirect(url_for("login_page"))
     music_dir = os.path.join(app.root_path, 'static', 'music')
     music_files = os.listdir(music_dir)
-    return render_template("index.html", music_files=music_files)
+    return render_template("index.html", music_files=music_files, role=session.get("role"))
 
+# Upload nhạc (chỉ nghệ sĩ mới truy cập được)
+@app.route("/upload", methods=["GET", "POST"])
+def upload():
+    if "username" not in session or session.get("role") != "artist":
+        return "Unauthorized", 403
+
+    if request.method == "GET":
+        return render_template("upload.html")
+    else:
+        file = request.files["file"]
+        save_path = os.path.join("static", "music", file.filename)
+        file.save(save_path)
+        return "Upload successful"
+
+# Trao đổi khóa
 session_keys = {}
 
 @app.route("/key-exchange", methods=["GET"])
@@ -132,13 +155,14 @@ def key_exchange():
     server_priv, server_pub = generate_ecdhe_keypair()
     pub_bytes = serialize_public_key(server_pub)
     signature = sign_ecdhe_pubkey(pub_bytes)
+    ecdsa_pub_bytes = get_ecdsa_public_key_bytes()
 
-    # Tạm lưu private key phiên trong RAM (chưa dùng session hoặc db)
     session_keys["server_priv_ecdhe"] = server_priv
 
     return jsonify({
         "server_pubkey_ecdhe": pub_bytes.hex(),
-        "signature": signature.hex()
+        "signature": signature.hex(),
+        "server_pubkey_ecdsa": ecdsa_pub_bytes.hex()
     })
 
 @app.route("/submit-client-key", methods=["POST"])
@@ -152,11 +176,9 @@ def submit_client_key():
         return jsonify({"status": "error", "message": "Session expired"}), 400
 
     shared_secret = compute_shared_secret(server_priv, client_pub_bytes)
-    session_keys["shared_secret"] = shared_secret  # bạn có thể lưu vào session real sau này
+    session_keys["shared_secret"] = shared_secret
 
     return jsonify({"status": "ok"})
-
-
 
 if __name__ == '__main__':
     app.run(debug=True)
