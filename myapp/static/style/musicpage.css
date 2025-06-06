@@ -1,13 +1,14 @@
 body {
     font-family: 'Segoe UI', sans-serif;
-    background: linear-gradient(120deg, #dfe9f3, #ffffff);
+    background-color: #121212;
+    color: #f1f1f1;
     margin: 0;
     padding: 20px;
 }
 
 h1 {
     text-align: center;
-    color: #2c3e50;
+    color: #00adb5;
     margin-bottom: 40px;
 }
 
@@ -19,24 +20,26 @@ h1 {
 }
 
 .music-card {
-    background-color: #ffffff;
+    background-color: #1e1e1e;
     border-radius: 12px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
     padding: 20px;
-    transition: transform 0.2s;
+    transition: transform 0.2s, background-color 0.3s;
 }
 
 .music-card:hover {
     transform: translateY(-5px);
+    background-color: #2a2a2a;
 }
 
 .music-title {
     font-weight: bold;
     margin-bottom: 10px;
-    color: #34495e;
+    color: #ffffff;
 }
 
 audio {
     width: 100%;
     border-radius: 8px;
+    background-color: #333;
 }
