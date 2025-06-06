@@ -7,7 +7,8 @@ from crypto_utils import (
     generate_ecdhe_keypair,
     serialize_public_key,
     sign_ecdhe_pubkey,
-    compute_shared_secret
+    compute_shared_secret,
+    get_ecdsa_public_key_bytes
 )
 
 load_dotenv()
