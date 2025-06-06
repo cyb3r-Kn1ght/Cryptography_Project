@@ -3,6 +3,13 @@ import os
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 from auth_utils import hash_password, verify_password
+from crypto_utils import (
+    generate_ecdhe_keypair,
+    serialize_public_key,
+    sign_ecdhe_pubkey,
+    compute_shared_secret
+)
+
 
 load_dotenv()
 
@@ -117,6 +124,39 @@ def index():
     music_dir = os.path.join(app.root_path, 'static', 'music')
     music_files = os.listdir(music_dir)
     return render_template("index.html", music_files=music_files)
+
+session_keys = {}
+
+@app.route("/key-exchange", methods=["GET"])
+def key_exchange():
+    server_priv, server_pub = generate_ecdhe_keypair()
+    pub_bytes = serialize_public_key(server_pub)
+    signature = sign_ecdhe_pubkey(pub_bytes)
+
+    # Tạm lưu private key phiên trong RAM (chưa dùng session hoặc db)
+    session_keys["server_priv_ecdhe"] = server_priv
+
+    return jsonify({
+        "server_pubkey_ecdhe": pub_bytes.hex(),
+        "signature": signature.hex()
+    })
+
+@app.route("/submit-client-key", methods=["POST"])
+def submit_client_key():
+    data = request.json
+    client_pub_hex = data["client_pubkey_ecdhe"]
+    client_pub_bytes = bytes.fromhex(client_pub_hex)
+
+    server_priv = session_keys.get("server_priv_ecdhe")
+    if not server_priv:
+        return jsonify({"status": "error", "message": "Session expired"}), 400
+
+    shared_secret = compute_shared_secret(server_priv, client_pub_bytes)
+    session_keys["shared_secret"] = shared_secret  # bạn có thể lưu vào session real sau này
+
+    return jsonify({"status": "ok"})
+
+
 
 if __name__ == '__main__':
     app.run(debug=True)
