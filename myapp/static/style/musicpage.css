@@ -8,9 +8,13 @@ body {
 
 h1 {
     text-align: center;
-    color: #00adb5;
     margin-bottom: 40px;
+    font-size: 2.5em;
+    background: linear-gradient(135deg, #00adb5, #a6ffcb);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
 }
+
 
 .music-list {
     display: grid;
