@@ -97,7 +97,9 @@
                 256
             );
 
-            console.log("🔐 Shared secret (client):", await arrayBufferToHex(sharedSecret));
+            const sharedHex = await arrayBufferToHex(sharedSecret);
+            console.log("🔐 Shared secret (client):", sharedHex);
+
 
             const clientPubRaw = await crypto.subtle.exportKey("raw", clientKeys.publicKey);
             const clientPubB64 = btoa(String.fromCharCode(...new Uint8Array(clientPubRaw)));
