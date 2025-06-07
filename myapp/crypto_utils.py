@@ -1,4 +1,5 @@
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.backends import default_backend
 import os
@@ -43,11 +44,18 @@ def serialize_public_key(pubkey):
     )
 
 def sign_ecdhe_pubkey(ecdhe_pub_bytes):
-    signature = ecdsa_private_key.sign(
+    # 1. Sinh DER-signature
+    der_sig = ecdsa_private_key.sign(
         ecdhe_pub_bytes,
         ec.ECDSA(hashes.SHA256())
     )
-    return signature
+    # 2. Giải mã DER để lấy (r, s)
+    r, s = decode_dss_signature(der_sig)
+    # 3. Chuyển mỗi số thành 32-byte big-endian và ghép lại
+    coord_len = (ec.SECP256R1().key_size + 7) // 8  # =32
+    r_bytes = r.to_bytes(coord_len, byteorder='big')
+    s_bytes = s.to_bytes(coord_len, byteorder='big')
+    return r_bytes + s_bytes
 
 def compute_shared_secret(server_priv_key, client_pub_bytes):
     client_pub_key = ec.EllipticCurvePublicKey.from_encoded_point(
