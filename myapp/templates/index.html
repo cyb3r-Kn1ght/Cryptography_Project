@@ -25,13 +25,21 @@
     <a href="/upload">Upload Music</a>
     {% endif %}
     <script>
-        function base64ToArrayBuffer(base64) {
-            const binaryString = atob(base64);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
+        // function base64ToArrayBuffer(base64) {
+        //     const binaryString = atob(base64);
+        //     const bytes = new Uint8Array(binaryString.length);
+        //     for (let i = 0; i < binaryString.length; i++) {
+        //         bytes[i] = binaryString.charCodeAt(i);
+        //     }
+        //     return bytes.buffer;
+        // }
+        function hexToArrayBuffer(hex) {
+            const len = hex.length / 2;
+            const buf = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                buf[i] = parseInt(hex.substr(i * 2, 2), 16);
             }
-            return bytes.buffer;
+            return buf.buffer;
         }
 
         async function arrayBufferToHex(buffer) {
