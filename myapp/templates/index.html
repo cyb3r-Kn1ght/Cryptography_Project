@@ -25,7 +25,7 @@
     <a href="/upload">Upload Music</a>
     {% endif %}
     <script>
-        // function base64ToArrayBuffer(base64) {
+        // function hexToArrayBuffer(base64) {
         //     const binaryString = atob(base64);
         //     const bytes = new Uint8Array(binaryString.length);
         //     for (let i = 0; i < binaryString.length; i++) {
@@ -56,9 +56,9 @@
                 server_pubkey_ecdsa
             } = await res.json();
 
-            const ecdheBuf = base64ToArrayBuffer(server_pubkey_ecdhe);
-            const sigBuf = base64ToArrayBuffer(signature);
-            const ecdsaBuf = base64ToArrayBuffer(server_pubkey_ecdsa);
+            const ecdheBuf = hexToArrayBuffer(server_pubkey_ecdhe);
+            const sigBuf = hexToArrayBuffer(signature);
+            const ecdsaBuf = hexToArrayBuffer(server_pubkey_ecdsa);
 
             const serverECDSAPubKey = await crypto.subtle.importKey(
                 "spki",
