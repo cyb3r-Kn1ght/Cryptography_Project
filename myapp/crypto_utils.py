@@ -1,11 +1,34 @@
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
-from cryptography.hazmat.primitives.asymmetric import utils
 from cryptography.hazmat.backends import default_backend
+import os
 
-# Tạo key ECDSA (long-term)
-ecdsa_private_key = ec.generate_private_key(ec.SECP256R1(), backend=default_backend())
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ECDSA_PRIV_FILE = os.path.join(BASE_DIR, "ecdsa_private_key.pem")
+ECDSA_PUB_FILE  = os.path.join(BASE_DIR, "ecdsa_public_key.der")
+
+# Tải hoặc tạo private key ECDSA
+if os.path.exists(ECDSA_PRIV_FILE):
+    with open(ECDSA_PRIV_FILE, "rb") as f:
+        ecdsa_private_key = serialization.load_pem_private_key(
+            f.read(),
+            password=None,
+            backend=default_backend()
+        )
+else:
+    ecdsa_private_key = ec.generate_private_key(ec.SECP256R1(), backend=default_backend())
+    with open(ECDSA_PRIV_FILE, "wb") as f:
+        f.write(ecdsa_private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        ))
+    with open(ECDSA_PUB_FILE, "wb") as f:
+        f.write(ecdsa_private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        ))
+
 ecdsa_public_key = ecdsa_private_key.public_key()
 
 def generate_ecdhe_keypair():
