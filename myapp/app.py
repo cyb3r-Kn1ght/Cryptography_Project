@@ -10,129 +10,85 @@ from crypto_utils import (
     sign_ecdhe_pubkey,
     compute_shared_secret,
     get_ecdsa_public_key_bytes,
-    derive_chacha20_key
+    derive_aesctr_key  # NEW
 )
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from Crypto.Cipher import ChaCha20
+from Crypto.Cipher import AES  # NEW: for AES‑CTR streaming
 import hvac
 
-# Load environment variables
+# ---------------------------------------------------------------------------
+# 0. Init
+# ---------------------------------------------------------------------------
 load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# Database connection
-db_url = os.getenv("DB_URL")
-if not db_url:
-    raise RuntimeError("DB_URL not set in environment")
-engine = create_engine(db_url)
+# ---------------------------------------------------------------------------
+# 1. DB & Vault
+# ---------------------------------------------------------------------------
+DB_URL = os.getenv("DB_URL")
+if not DB_URL:
+    raise RuntimeError("DB_URL not set in .env")
+engine = create_engine(DB_URL)
+print("[BOOT] DB_URL ->", engine.url, flush=True)
 
-# Vault client initialization
-vault_addr = os.getenv("VAULT_ADDR")
+vault_addr  = os.getenv("VAULT_ADDR")
 vault_token = os.getenv("VAULT_TOKEN")
 if not vault_addr or not vault_token:
-    raise RuntimeError("VAULT_ADDR or VAULT_TOKEN not set in environment")
-vault_client = hvac.Client(url=vault_addr, token=vault_token)
+    raise RuntimeError("VAULT_ADDR / VAULT_TOKEN missing")
+vault = hvac.Client(url=vault_addr, token=vault_token)
 
-# Default route: redirect to login
+# ---------------------------------------------------------------------------
+# 2. Auth routes
+# ---------------------------------------------------------------------------
 @app.route('/')
 def root():
     return redirect(url_for('login_page'))
 
-# Login page (GET + POST)
 @app.route('/login_page', methods=['GET', 'POST'])
 def login_page():
     if request.method == 'GET':
         return render_template('login.html')
     username = request.form.get('username')
     password = request.form.get('password')
-    try:
-        with engine.connect() as conn:
-            row = conn.execute(
-                text('SELECT password_hash, role FROM users WHERE username = :u'),
-                {'u': username}
-            ).fetchone()
-        if row and verify_password(row[0], password):
-            session['username'] = username
-            session['role'] = row[1]
-            return redirect(url_for('index'))
-        return 'Invalid credentials', 401
-    except Exception as e:
-        return f'Error: {e}', 500
+    with engine.connect() as c:
+        row = c.execute(text('SELECT password_hash, role FROM users WHERE username=:u'), {'u': username}).fetchone()
+    if row and verify_password(row[0], password):
+        session.update(username=username, role=row[1])
+        return redirect(url_for('index'))
+    return 'Invalid credentials', 401
 
-# Register page
 @app.route('/register_page', methods=['GET', 'POST'])
 def register_page():
     if request.method == 'GET':
         return render_template('register.html')
-    username = request.form.get('username')
-    email = request.form.get('email')
-    password = request.form.get('password')
+    data = {k: request.form.get(k) for k in ('username', 'email', 'password')}
+    if not all(data.values()):
+        return 'Missing fields', 400
     role = request.form.get('role', 'user')
-    pwd_hash = hash_password(password)
+    pwd_hash = hash_password(data['password'])
     try:
-        with engine.begin() as conn:
-            conn.execute(
-                text('INSERT INTO users (username, email, password_hash, role) VALUES (:u,:e,:p,:r)'),
-                {'u': username, 'e': email, 'p': pwd_hash, 'r': role}
-            )
-        return redirect(url_for('login_page'))
-    except Exception as e:
-        return f'Error: {e}', 400
+        with engine.begin() as c:
+            c.execute(text('INSERT INTO users (username,email,password_hash,role) VALUES (:u,:e,:p,:r)'),
+                      {'u': data['username'], 'e': data['email'], 'p': pwd_hash, 'r': role})
+    except Exception as exc:
+        return f'Error: {exc}', 400
+    return redirect(url_for('login_page'))
 
-# API: register
-@app.route('/register', methods=['POST'])
-def register_api():
-    data = request.json or {}
-    username = data.get('username')
-    email = data.get('email')
-    password = data.get('password')
-    role = data.get('role', 'user')
-    if not username or not email or not password:
-        return jsonify({'status':'error','message':'Missing fields'}), 400
-    pwd_hash = hash_password(password)
-    try:
-        with engine.begin() as conn:
-            conn.execute(
-                text('INSERT INTO users (username, email, password_hash, role) VALUES (:u,:e,:p,:r)'),
-                {'u': username, 'e': email, 'p': pwd_hash, 'r': role}
-            )
-        return jsonify({'status':'success'})
-    except Exception as e:
-        return jsonify({'status':'error','message':str(e)}), 400
-
-# API: login
-@app.route('/login', methods=['POST'])
-def login_api():
-    data = request.json or {}
-    username = data.get('username')
-    password = data.get('password')
-    try:
-        with engine.connect() as conn:
-            row = conn.execute(
-                text('SELECT password_hash, role FROM users WHERE username = :u'),
-                {'u': username}
-            ).fetchone()
-        if row and verify_password(row[0], password):
-            return jsonify({'status':'success','role':row[1]})
-        return jsonify({'status':'error','message':'Invalid credentials'}), 401
-    except Exception as e:
-        return jsonify({'status':'error','message':str(e)}), 500
-
-# Music dashboard
+# ---------------------------------------------------------------------------
+# 3. Music list & upload (artist)
+# ---------------------------------------------------------------------------
 @app.route('/music_list')
 def index():
     if 'username' not in session:
         return redirect(url_for('login_page'))
-    with engine.connect() as conn:
-        rows = conn.execute(text('SELECT filename FROM songs ORDER BY id')).fetchall()
-    music_files = [r[0] for r in rows]
-    return render_template('index.html', music_files=music_files, role=session.get('role'))
+    with engine.connect() as c:
+        files = [r[0] for r in c.execute(text('SELECT filename FROM songs ORDER BY id'))]
+    return render_template('index.html', music_files=files, role=session.get('role'))
 
-# Upload (artist only)
-@app.route('/upload', methods=['GET','POST'])
+@app.route('/upload', methods=['GET', 'POST'])
 def upload():
     if session.get('role') != 'artist':
         return 'Unauthorized', 403
@@ -142,140 +98,98 @@ def upload():
     if not f:
         return 'No file', 400
     f.save(os.path.join(app.root_path, 'static', 'music', f.filename))
-    return 'Upload successful'
+    return 'Upload OK'
 
-# Play music with AES-GCM decrypt and Range support
+# ---------------------------------------------------------------------------
+# 4. AES‑GCM (preview) route – vẫn giữ để test
+# ---------------------------------------------------------------------------
 @app.route('/music/<filename>')
 def play_music(filename):
-    with engine.connect() as conn:
-        row = conn.execute(
-            text('SELECT encrypted_data, nonce, tag, aes_key_id FROM songs WHERE filename = :fn'),
-            {'fn': filename}
-        ).fetchone()
+    with engine.connect() as c:
+        row = c.execute(text('SELECT encrypted_data, nonce, tag, aes_key_id FROM songs WHERE filename=:fn'), {'fn': filename}).fetchone()
     if not row:
         return 'Not Found', 404
-    enc_blob, nonce_mv, tag_mv, key_id = row
+    enc_blob, nonce_mv, tag_mv, kid = row
     enc   = bytes(enc_blob)
     nonce = bytes(nonce_mv)
     tag   = bytes(tag_mv)
-
-    # get key from Vault
+    key_hex = vault.secrets.kv.v2.read_secret_version(path=f'music/{kid}', mount_point='secret')['data']['data']['key']
+    aesgcm = AESGCM(bytes.fromhex(key_hex))
     try:
-        data = vault_client.secrets.kv.v2.read_secret_version(
-            path=f'music/{key_id}', mount_point='secret'
-        )['data']['data']
-        aes_key = bytes.fromhex(data['key'])
-    except Exception as e:
-        return f'KMS error: {e}', 500
+        pt = aesgcm.decrypt(nonce, enc + tag, None)
+    except Exception as exc:
+        return f'Decrypt error: {exc}', 500
 
-    aesgcm     = AESGCM(aes_key)
-    ciphertext = enc + tag
-    try:
-        pt = aesgcm.decrypt(nonce, ciphertext, None)
-    except Exception as e:
-        app.logger.error(f'Fail decrypt: {e}')
-        return f'Decrypt error: {e}', 500
+    return send_file(BytesIO(pt), mimetype='audio/mpeg', as_attachment=False)
 
-    # Range support
-    size = len(pt)
-    r = request.headers.get('Range')
-    if r:
-        import re
-        m = re.match(r'bytes=(\d+)-(\d*)', r)
-        if m:
-            s = int(m.group(1))
-            e = int(m.group(2)) if m.group(2) else size - 1
-            if e >= size:
-                e = size - 1
-            chunk = pt[s:e+1]
-            rv = Response(chunk, 206, mimetype='audio/mpeg')
-            rv.headers['Content-Range'] = f'bytes {s}-{e}/{size}'
-            rv.headers['Accept-Ranges'] = 'bytes'
-            rv.headers['Content-Length'] = str(e - s + 1)
-            return rv
+# ---------------------------------------------------------------------------
+# 5. Helper: decrypt full plaintext from DB
+# ---------------------------------------------------------------------------
 
-    # full send
-    bio = BytesIO(pt)
-    bio.seek(0)
-    return send_file(bio, mimetype='audio/mpeg', as_attachment=False, conditional=True)
-
-# Helper: decrypt AES-GCM and return plaintext
-def get_plaintext_from_db(filename):
-    with engine.connect() as conn:
-        row = conn.execute(
-            text('SELECT encrypted_data, nonce, tag, aes_key_id FROM songs WHERE filename = :fn'),
-            {'fn': filename}
-        ).fetchone()
+def get_plaintext_from_db(filename: str) -> bytes:
+    with engine.connect() as c:
+        row = c.execute(text('SELECT encrypted_data, nonce, tag, aes_key_id FROM songs WHERE filename=:fn'), {'fn': filename}).fetchone()
     if not row:
-        raise FileNotFoundError(f"{filename} not found")
-    enc_blob, nonce_mv, tag_mv, key_id = row
+        raise FileNotFoundError(filename)
+    enc_blob, nonce_mv, tag_mv, kid = row
     enc   = bytes(enc_blob)
     nonce = bytes(nonce_mv)
     tag   = bytes(tag_mv)
+    key_hex = vault.secrets.kv.v2.read_secret_version(path=f'music/{kid}', mount_point='secret')['data']['data']['key']
+    aesgcm = AESGCM(bytes.fromhex(key_hex))
+    return aesgcm.decrypt(nonce, enc + tag, None)
 
-    data = vault_client.secrets.kv.v2.read_secret_version(
-        path=f'music/{key_id}', mount_point='secret'
-    )['data']['data']
-    aes_key = bytes.fromhex(data['key'])
-
-    aesgcm     = AESGCM(aes_key)
-    ciphertext = enc + tag
-    return aesgcm.decrypt(nonce, ciphertext, None)
-
-# ChaCha20 streaming endpoint
+# ---------------------------------------------------------------------------
+# 6. AES‑CTR streaming endpoint (chunked)
+# ---------------------------------------------------------------------------
 @app.route('/stream/<filename>')
 def stream_music(filename):
-    ss_hex = session.get('shared_secret')
-    if not ss_hex:
-        return 'Key-exchange required', 401
+    if 'shared_secret' not in session:
+        return 'Key‑exchange required', 401
 
     try:
         pt = get_plaintext_from_db(filename)
     except FileNotFoundError:
         return 'Not Found', 404
 
-    key = derive_chacha20_key(bytes.fromhex(ss_hex))
+    key = derive_aesctr_key(bytes.fromhex(session['shared_secret']))  # 32‑byte
 
-    def generate():
-        idx = 0
-        chunk_size = 64 * 1024
-        for offset in range(0, len(pt), chunk_size):
-            chunk = pt[offset:offset + chunk_size]
-            nonce  = b'\x00'*4 + idx.to_bytes(8, 'big')
-            cipher = ChaCha20.new(key=key, nonce=nonce)
-            yield idx.to_bytes(8, 'big') + cipher.encrypt(chunk)
-            idx += 1
+    def gen():
+        CHUNK = 64 * 1024
+        for idx, off in enumerate(range(0, len(pt), CHUNK)):
+            plain_chunk = pt[off:off+CHUNK]
+            iv = b'\x00' * 8 + idx.to_bytes(8, 'big')
+            cipher = AES.new(key, AES.MODE_CTR, initial_value=iv, nonce=b'')
+            yield idx.to_bytes(8, 'big') + cipher.encrypt(plain_chunk)
+    return Response(gen(), mimetype='application/octet-stream')
 
-    return Response(generate(), mimetype='application/octet-stream')
-
-# ECDHE/ECDSA key exchange endpoints
-@app.route('/key-exchange', methods=['GET'])
+# ---------------------------------------------------------------------------
+# 7. ECDH key‑exchange endpoints
+# ---------------------------------------------------------------------------
+@app.route('/key-exchange')
 def key_exchange():
     if 'username' not in session:
-        return jsonify({'error':'Unauthorized'}), 401
+        return jsonify(error='Unauthorized'), 401
     priv, pub = generate_ecdhe_keypair()
-    pubb      = serialize_public_key(pub)
-    sig       = sign_ecdhe_pubkey(pubb)
-    ecdsa_pub = get_ecdsa_public_key_bytes()
     session['server_priv_scalar'] = priv.private_numbers().private_value
-    return jsonify({
-        'server_pubkey_ecdhe': pubb.hex(),
-        'signature': sig.hex(),
-        'server_pubkey_ecdsa': ecdsa_pub.hex()
-    })
+    return jsonify(
+        server_pubkey_ecdhe=serialize_public_key(pub).hex(),
+        signature=sign_ecdhe_pubkey(serialize_public_key(pub)).hex(),
+        server_pubkey_ecdsa=get_ecdsa_public_key_bytes().hex()
+    )
 
 @app.route('/submit-client-key', methods=['POST'])
 def submit_client_key():
     data = request.json or {}
-    priv_scalar = session.get('server_priv_scalar')
-    if not priv_scalar:
-        return jsonify({'status':'error','message':'Session expired'}), 400
+    if 'server_priv_scalar' not in session:
+        return jsonify(status='error', message='Session expired'), 400
     client_pub = bytes.fromhex(data.get('client_pubkey_ecdhe', ''))
-    server_priv = ec.derive_private_key(priv_scalar, ec.SECP256R1())
-    shared      = compute_shared_secret(server_priv, client_pub)
+    server_priv = ec.derive_private_key(session['server_priv_scalar'], ec.SECP256R1())
+    shared = compute_shared_secret(server_priv, client_pub)
     session['shared_secret'] = shared.hex()
-    print(f"🔑 Server shared secret: {shared.hex()}", flush=True)
-    return jsonify({'status':'ok'})
+    print('🔑 Shared secret', shared.hex(), flush=True)
+    return jsonify(status='ok')
 
+# ---------------------------------------------------------------------------
 if __name__ == '__main__':
     app.run(debug=True)

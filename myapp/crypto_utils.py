@@ -2,8 +2,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.backends import default_backend
-from Crypto.Protocol.KDF import HKDF
-from Crypto.Hash import SHA256
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF   # <- đúng bảnfrom Crypto.Hash import SHA256
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -84,3 +83,12 @@ def derive_chacha20_key(shared_secret: bytes, salt: bytes = b'stream-salt') -> b
         hashmod=SHA256,
         context=b'chacha20-stream'
     )
+def derive_aesctr_key(shared_secret: bytes) -> bytes:
+    """HKDF-SHA256 → 32-byte key cho AES-CTR."""
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),   # tham số hợp lệ
+        length=32,
+        salt=b"stream-salt",
+        info=b"aes-ctr-stream",
+    )
+    return hkdf.derive(shared_secret)
