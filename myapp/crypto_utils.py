@@ -2,6 +2,8 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.backends import default_backend
+from Crypto.Protocol.KDF import HKDF
+from Crypto.Hash import SHA256
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -68,4 +70,17 @@ def get_ecdsa_public_key_bytes():
     return ecdsa_public_key.public_bytes(
         encoding=serialization.Encoding.DER,
         format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+def derive_chacha20_key(shared_secret: bytes, salt: bytes = b'stream-salt') -> bytes:
+    """
+    HKDF-SHA256 → 32-byte key cho ChaCha20.
+    Salt có thể fixe hoặc negotiate trước.
+    """
+    return HKDF(
+        master=shared_secret,
+        key_len=32,
+        salt=salt,
+        hashmod=SHA256,
+        context=b'chacha20-stream'
     )
