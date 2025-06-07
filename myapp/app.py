@@ -206,6 +206,8 @@ def submit_client_key():
     server_priv=ec.derive_private_key(priv_scalar,ec.SECP256R1())
     shared=compute_shared_secret(server_priv,client_pub)
     session['shared_secret']=shared.hex()
+        # **Log ra console**
+    app.logger.info(f"🔑 Server shared secret: {shared.hex()}")
     return jsonify({'status':'ok'})
 
 if __name__=='__main__': app.run(debug=True)
