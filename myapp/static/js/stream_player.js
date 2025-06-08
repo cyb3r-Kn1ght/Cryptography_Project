@@ -68,15 +68,21 @@
         }
 
         try {
-          const idx = new DataView(value.buffer).getBigUint64(0, false);
-          const cipher = value.slice(8);
+          // 1) Đọc đúng vị trí trong buffer, bao gồm byteOffset/byteLength
+          const dv = new DataView(value.buffer, value.byteOffset, value.byteLength);
+          const idx = dv.getBigUint64(0, false);    // big-endian
+          // 2) Tách cipher từ byte thứ 8 trở đi
+          const cipher = value.subarray(8);
 
-
+          // 3) Tạo IV 16 bytes với counter = idx
           const iv = new Uint8Array(16);
-          new DataView(iv.buffer).setBigUint64(8, idx);  // chuẩn IV
+          new DataView(iv.buffer).setBigUint64(8, idx, false);
 
+          // 4) Giải mã
           const plainBuf = await crypto.subtle.decrypt(
-            { name: 'AES-CTR', counter: iv, length: 128 }, aesKey, cipher
+            { name: 'AES-CTR', counter: iv, length: 128 },
+            aesKey,
+            cipher
           );
 
           console.log("🔓 Plain chunk", idx, new Uint8Array(plainBuf).slice(0, 10));
