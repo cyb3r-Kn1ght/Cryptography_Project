@@ -69,7 +69,8 @@
 
         try {
           const idx = new DataView(value.buffer).getBigUint64(0, false);
-          const cipher = new Uint8Array(value.buffer.slice(8));
+          const cipher = value.slice(8);
+
 
           const iv = new Uint8Array(16);
           new DataView(iv.buffer).setBigUint64(8, idx);  // chuẩn IV
