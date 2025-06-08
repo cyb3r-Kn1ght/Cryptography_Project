@@ -87,15 +87,6 @@
       }
 
       const blob = new Blob(out, { type: 'audio/mpeg' });
-      // Tạo link download file mp3
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = file.replace(/\.[^/.]+$/, '') + '_decrypted.mp3';  // dùng tên file gốc
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
 
       new Audio(URL.createObjectURL(blob)).play();
     } catch (e) {

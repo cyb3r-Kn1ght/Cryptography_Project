@@ -159,9 +159,10 @@ def stream_music(filename):
         for idx, off in enumerate(range(0, len(pt), CHUNK)):
             plain_chunk = pt[off:off+CHUNK]
             iv = b'\x00' * 8 + idx.to_bytes(8, 'big')
-            cipher = AES.new(key, AES.MODE_CTR, initial_value=iv, nonce=b'')
+            nonce = iv[:8]
+            initval = int.from_bytes(iv[8:], byteorder='big')
+            cipher = AES.new(key, AES.MODE_CTR, nonce=nonce, initial_value=initval)
             yield idx.to_bytes(8, 'big') + cipher.encrypt(plain_chunk)
-    return Response(gen(), mimetype='application/octet-stream')
 
 # ---------------------------------------------------------------------------
 # 7. ECDH key‑exchange endpoints
