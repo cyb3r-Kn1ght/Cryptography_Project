@@ -47,3 +47,5 @@ Phía Client -> viết bằng JavaScript trong trình duyệt (Web Crypto API h�
 - Gửi từng chunk kèm chỉ số
 
 ![image](https://github.com/user-attachments/assets/41f0b0b4-010a-48dc-807c-3982ad966b80)
+
+cloudflared tunnel   --url https://127.0.0.1:443   --origin-ca-pool /etc/apache2/ssl/server.crt   --origin-server-name 100.94.229.106   --loglevel info
