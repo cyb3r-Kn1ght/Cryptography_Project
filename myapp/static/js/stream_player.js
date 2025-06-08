@@ -58,21 +58,26 @@
       while (true) {
         const { value, done } = await rd.read();
         if (done) break;
-        if (!value || value.byteLength < 8) {
-          console.warn("⚠️ Chunk quá ngắn:", value?.byteLength);
-          continue;
-        }
 
         const idx = new DataView(value.buffer).getBigUint64(0, false);
         const cipher = new Uint8Array(value.buffer, 8);
 
-        const iv = new Uint8Array(16);           // 8 zero + 8B idx
-        iv.set(new Uint8Array(BigInt(idx).toString(16).padStart(16, '0')
-          .match(/../g).map(b => parseInt(b, 16))), 8);
+        const iv = new Uint8Array(16);
+        new DataView(iv.buffer).setBigUint64(8, idx);  // chính xác và dễ đọc
 
-        const plainBuf = await crypto.subtle.decrypt(
-          { name: 'AES-CTR', counter: iv, length: 128 }, aesKey, cipher);
-        out.push(new Uint8Array(plainBuf));
+        console.log("Plain chunk", idx, new Uint8Array(plainBuf).slice(0, 10));
+
+
+        try {
+          const plainBuf = await crypto.subtle.decrypt(
+            { name: 'AES-CTR', counter: iv, length: 128 }, aesKey, cipher
+          );
+          out.push(new Uint8Array(plainBuf));
+        } catch (err) {
+          console.error(`❌ Decrypt chunk ${idx} thất bại`, err);
+          break; 
+        }
+
       }
       const blob = new Blob(out, { type: 'audio/mpeg' });
       new Audio(URL.createObjectURL(blob)).play();
