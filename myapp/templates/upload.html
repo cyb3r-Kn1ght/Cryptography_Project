@@ -1,5 +1,21 @@
-<h2>Upload Music</h2>
-<form action="/upload" method="post" enctype="multipart/form-data">
-  <input type="file" name="file" required><br>
-  <button type="submit">Upload</button>
-</form>
+<!-- templates/upload.html -->
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Upload Music</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style/upload.css') }}">
+</head>
+<body>
+    <div class="upload-container">
+        <h2>Upload Music</h2>
+        <form action="/upload" method="post" enctype="multipart/form-data" class="upload-form">
+            <input type="file" name="file" required>
+            <button type="submit">Upload</button>
+        </form>
+        <p class="back-link">
+            <a href="/">← Quay lại trang chủ</a>
+        </p>
+    </div>
+</body>
+</html>
