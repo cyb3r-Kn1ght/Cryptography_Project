@@ -1,0 +1,78 @@
+/* static/style/login.css */
+
+/* Toàn trang dark theme */
+body {
+    background-color: #121212;
+    color: #e0e0e0;
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+}
+
+/* Tiêu đề */
+h2 {
+    margin-bottom: 20px;
+    font-size: 2rem;
+}
+
+/* Form login */
+.login-form {
+    background-color: #1e1e1e;
+    padding: 30px 40px;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 320px;
+    gap: 15px;
+}
+
+/* Input fields */
+.login-form input[type="text"],
+.login-form input[type="password"] {
+    padding: 10px;
+    border: 1px solid #333;
+    border-radius: 4px;
+    background-color: #2a2a2a;
+    color: #e0e0e0;
+    font-size: 1rem;
+}
+
+/* Submit button */
+.login-form button {
+    padding: 10px;
+    border: none;
+    border-radius: 4px;
+    background-color: #1db954;
+    color: #fff;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.login-form button:hover {
+    background-color: #17c34a;
+}
+
+/* Link đăng ký */
+.register-link {
+    margin-top: 15px;
+    color: #e0e0e0;
+    font-size: 0.9rem;
+}
+
+.register-link a {
+    color: #1db954;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.register-link a:hover {
+    text-decoration: underline;
+}
