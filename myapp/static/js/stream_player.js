@@ -87,7 +87,8 @@
       }
 
       const blob = new Blob(out, { type: 'audio/mpeg' });
-
+      console.log("✅ Blob size:", blob.size);
+      console.log("✅ Blob type:", blob.type);
       new Audio(URL.createObjectURL(blob)).play();
     } catch (e) {
       alert(e.message);
@@ -97,8 +98,6 @@
       btn.textContent = 'Play';
     }
   }
-  console.log("✅ Blob size:", blob.size);
-  console.log("✅ Blob type:", blob.type);
 
   document.querySelectorAll('.play-btn')
     .forEach(b => b.onclick = () => play(b.dataset.file, b));
