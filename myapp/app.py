@@ -163,7 +163,7 @@ def stream_music(filename):
             initval = int.from_bytes(iv[8:], byteorder='big')
             cipher = AES.new(key, AES.MODE_CTR, nonce=nonce, initial_value=initval)
             yield idx.to_bytes(8, 'big') + cipher.encrypt(plain_chunk)
-
+    return Response(gen(), mimetype='application/octet-stream')
 # ---------------------------------------------------------------------------
 # 7. ECDH key‑exchange endpoints
 # ---------------------------------------------------------------------------
