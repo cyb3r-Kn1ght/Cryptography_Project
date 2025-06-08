@@ -97,6 +97,8 @@
       btn.textContent = 'Play';
     }
   }
+  console.log("✅ Blob size:", blob.size);
+  console.log("✅ Blob type:", blob.type);
 
   document.querySelectorAll('.play-btn')
     .forEach(b => b.onclick = () => play(b.dataset.file, b));
