@@ -25,6 +25,14 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
+ALLOWED_EXTENSIONS = {'mp3'}
+FILENAME_RE = re.compile(r'^[A-Za-z0-9_-]+$')
+
+def allowed_file(filename):
+    return (
+        '.' in filename and
+        filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    )
 
 # ---------------------------------------------------------------------------
 # 1. DB & Vault
@@ -91,70 +99,93 @@ def index():
 
 @app.route('/upload', methods=['GET', 'POST'])
 def upload():
-    # 0) Chỉ nghệ sĩ mới được phép
+    # 0) Chỉ artist mới được phép
     if session.get('role') != 'artist':
-        return 'Unauthorized', 403
+        abort(403)
 
-    # 1) Hiển thị form
+    # 1) GET: trả form
     if request.method == 'GET':
         return render_template('upload.html')
 
-    # 2) Nhận file
-    f = request.files.get('file')
-    if not f or f.filename == '':
-        return 'No file', 400
-    if not f.filename.lower().endswith('.mp3'):
-        return 'Only .mp3 allowed', 400
+    # 2) POST: nhận file
+    file = request.files.get('file')
+    if not file:
+        abort(400, 'Không có file được gửi lên')
+    if file.filename == '':
+        abort(400, 'Chưa chọn file')
+    if not allowed_file(file.filename):
+        abort(400, 'Chỉ cho phép .mp3')
 
-    data = f.read()                       # bytes của MP3
-    fname = f.filename
-    key_id = os.path.splitext(fname)[0]   # dùng tên file (không đuôi) làm id
+    # 3) Sanitize tên file để tránh path traversal
+    filename = secure_filename(file.filename)
+    if filename == '':
+        abort(400, 'Tên file không hợp lệ')
+    key_id = filename.rsplit('.', 1)[0]
+    if not FILENAME_RE.match(key_id):
+        abort(400, 'Tên file chỉ được chứa chữ, số, "_" và "-"')
 
-    # 3) Sinh AES-GCM key + nonce, lưu vào Vault
+    # 4) Đọc nội dung và kiểm tra không rỗng
+    data = file.read()
+    if not data:
+        abort(400, 'File rỗng')
+
+    # 5) Xác thực thực sự là MP3
+    try:
+        audio = MP3(BytesIO(data))
+        title  = str(audio.tags.get('TIT2', filename))
+        artist = str(audio.tags.get('TPE1', ''))
+        length = int(audio.info.length)
+    except HeaderNotFoundError:
+        abort(400, 'Không phải file MP3 hợp lệ')
+    except Exception:
+        title, artist, length = filename, '', 0
+
+    # 6) Tạo AES-GCM key + nonce
     aes_key = AESGCM.generate_key(bit_length=128)
     nonce   = os.urandom(12)
-    vault.secrets.kv.v2.create_or_update_secret(
-        path=f"music/{key_id}",
-        secret={'key': aes_key.hex(), 'nonce': nonce.hex()},
-        mount_point='secret'
-    )
 
-    # 4) Mã hóa
+    # 7) Lưu vào Vault
+    try:
+        vault.secrets.kv.v2.create_or_update_secret(
+            path=f"music/{key_id}",
+            mount_point='secret',
+            secret={'key': aes_key.hex(), 'nonce': nonce.hex()}
+        )
+    except Exception:
+        current_app.logger.exception('Vault write failed')
+        abort(500, 'Lỗi lưu key vào Vault')
+
+    # 8) Mã hóa MP3
     aesgcm     = AESGCM(aes_key)
     encrypted  = aesgcm.encrypt(nonce, data, None)
-    ciphertext = encrypted[:-16]          # bỏ tag
+    ciphertext = encrypted[:-16]   # bỏ tag
     tag        = encrypted[-16:]
 
-    # 5) Đọc metadata
+    # 9) Ghi metadata + ciphertext vào DB
     try:
-        audio   = MP3(BytesIO(data))
-        title   = str(audio.tags.get('TIT2', fname))
-        artist  = str(audio.tags.get('TPE1', ''))
-        length  = int(audio.info.length)
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO songs
+                  (filename, title, artist, length,
+                   aes_key_id, nonce, tag, encrypted_data)
+                VALUES
+                  (:filename, :title, :artist, :length,
+                   :aes_key_id, :nonce, :tag, :encrypted_data)
+            """), {
+                'filename': filename,
+                'title':    title,
+                'artist':   artist,
+                'length':   length,
+                'aes_key_id': key_id,
+                'nonce':      nonce,
+                'tag':        tag,
+                'encrypted_data': ciphertext
+            })
     except Exception:
-        title, artist, length = fname, '', 0
+        current_app.logger.exception('DB write failed')
+        abort(500, 'Lỗi lưu vào cơ sở dữ liệu')
 
-    # 6) Ghi vào DB
-    with engine.begin() as conn:
-        conn.execute(text("""
-            INSERT INTO songs
-              (filename, title, artist, length, aes_key_id,
-               nonce, tag, encrypted_data)
-            VALUES
-              (:filename, :title, :artist, :length, :aes_key_id,
-               :nonce, :tag, :encrypted_data)
-        """), {
-            'filename': fname,
-            'title': title,
-            'artist': artist,
-            'length': length,
-            'aes_key_id': key_id,
-            'nonce': nonce,
-            'tag': tag,
-            'encrypted_data': ciphertext
-        })
-
-    return f'✅ Đã upload & lưu: {fname}', 201
+    return f'✅ Đã upload & lưu: {filename}', 201
 
 # ---------------------------------------------------------------------------
 # 4. AES‑GCM (preview) route – vẫn giữ để test
