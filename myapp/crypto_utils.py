@@ -92,3 +92,19 @@ def derive_aesctr_key(shared_secret: bytes) -> bytes:
         info=b"aes-ctr-stream",
     )
     return hkdf.derive(shared_secret)
+
+CHUNK_SALT = b"chunk-salt"
+
+def derive_subkey(master_key: bytes, idx: int) -> bytes:
+    """
+    Sinh subkey cho chunk thứ idx từ master_key bằng HKDF-SHA256.
+    master_key: 32-byte AES-CTR master key.
+    idx: chỉ số chunk.
+    """
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=CHUNK_SALT,
+        info=f"chunk-{idx}".encode(),
+    )
+    return hkdf.derive(master_key)
