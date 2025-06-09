@@ -42,7 +42,7 @@ async function main() {
         alert("❌ Chữ ký của server không hợp lệ");
         return;
     }
-    console.log("✅ Server signature verified");
+    //console.log("✅ Server signature verified");
 
     // 3. Derive shared secret
     const serverECDHPubKey = await crypto.subtle.importKey(
@@ -58,12 +58,12 @@ async function main() {
         { name: "ECDH", public: serverECDHPubKey },
         clientKeys.privateKey, 256
     );
-    console.log("🔐 Shared secret (client):", arrayBufferToHex(sharedSecret));
+    //console.log("🔐 Shared secret (client):", arrayBufferToHex(sharedSecret));
 
     // 4. Export public key của client, convert → hex, rồi POST
     const rawPub = await crypto.subtle.exportKey("raw", clientKeys.publicKey);
     const hexPub = arrayBufferToHex(rawPub);
-    console.log("Client ECDHE pubkey (hex):", hexPub);
+    //console.log("Client ECDHE pubkey (hex):", hexPub);
 
     const res2 = await fetch("/submit-client-key", {
         method: "POST",
@@ -74,7 +74,7 @@ async function main() {
         const err = await res2.text();
         throw new Error("submit-client-key lỗi: " + res2.status + " – " + err);
     }
-    console.log("✅ Đã submit client key thành công");
+    //console.log("✅ Đã submit client key thành công");
 }
 
 // Chạy khi DOM load xong
