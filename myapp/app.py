@@ -13,7 +13,8 @@ from crypto_utils import (
     sign_ecdhe_pubkey,
     compute_shared_secret,
     get_ecdsa_public_key_bytes,
-    derive_aesctr_key  # NEW
+    derive_aesctr_key,  # NEW
+    derive_subkey
 )
 from werkzeug.utils import secure_filename
 from mutagen.mp3 import MP3, HeaderNotFoundError                     # NEW
@@ -265,17 +266,27 @@ def stream_music(filename):
     except FileNotFoundError:
         return 'Not Found', 404
 
-    key = derive_aesctr_key(bytes.fromhex(session['shared_secret']))  # 32‑byte
+    # key = derive_aesctr_key(bytes.fromhex(session['shared_secret']))  # 32‑byte
 
+    # def gen():
+    #     CHUNK = 64 * 1024
+    #     for idx, off in enumerate(range(0, len(pt), CHUNK)):
+    #         plain_chunk = pt[off:off+CHUNK]
+    #         iv = b'\x00' * 8 + idx.to_bytes(8, 'big')
+    #         nonce = iv[:8]
+    #         initval = int.from_bytes(iv[8:], byteorder='big')
+    #         cipher = AES.new(key, AES.MODE_CTR, nonce=nonce, initial_value=initval)
+    #         yield idx.to_bytes(8, 'big') + cipher.encrypt(plain_chunk)
+    master_key = derive_aesctr_key(bytes.fromhex(session['shared_secret']))
     def gen():
         CHUNK = 64 * 1024
         for idx, off in enumerate(range(0, len(pt), CHUNK)):
-            plain_chunk = pt[off:off+CHUNK]
-            iv = b'\x00' * 8 + idx.to_bytes(8, 'big')
-            nonce = iv[:8]
-            initval = int.from_bytes(iv[8:], byteorder='big')
-            cipher = AES.new(key, AES.MODE_CTR, nonce=nonce, initial_value=initval)
-            yield idx.to_bytes(8, 'big') + cipher.encrypt(plain_chunk)
+            chunk = pt[off:off+CHUNK]
+            subkey = derive_subkey(master_key, idx)
+            iv   = b'\x00'*8
+            init = idx
+            cipher = AES.new(subkey, AES.MODE_CTR, nonce=iv, initial_value=init)
+            yield idx.to_bytes(8, 'big') + cipher.encrypt(chunk)
     return Response(gen(), mimetype='application/octet-stream')
 # ---------------------------------------------------------------------------
 # 7. ECDH key‑exchange endpoints
