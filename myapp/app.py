@@ -1,7 +1,9 @@
-from flask import Flask, render_template, Response, request, jsonify, redirect, url_for, session, send_file
+from flask import Flask, render_template, Response, request, jsonify, redirect, url_for, session, send_file, current_app, abort
 import os
 import re
 from io import BytesIO
+from pydub import AudioSegment
+from pydub.generators import Sine
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 from auth_utils import hash_password, verify_password
@@ -13,7 +15,8 @@ from crypto_utils import (
     get_ecdsa_public_key_bytes,
     derive_aesctr_key  # NEW
 )
-from mutagen.mp3 import MP3                         # NEW
+from werkzeug.utils import secure_filename
+from mutagen.mp3 import MP3, HeaderNotFoundError                     # NEW
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from Crypto.Cipher import AES  # NEW: for AES‑CTR streaming
@@ -29,12 +32,26 @@ app.secret_key = os.urandom(24)
 ALLOWED_EXTENSIONS = {'mp3'}
 FILENAME_RE = re.compile(r'^[A-Za-z0-9_-]+$')
 
+# Cac ham tang cuong bao mat
 def allowed_file(filename):
     return (
         '.' in filename and
         filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
     )
-
+def embed_watermark(mp3_bytes: bytes, payload: str) -> bytes:
+    # 1) decode MP3 → PCM
+    audio = AudioSegment.from_file(BytesIO(mp3_bytes), format="mp3")
+    # 2) tạo tone 19kHz (duration 800ms) + giảm gain
+    tone = Sine(19000).to_audio_segment(duration=800).apply_gain(-30)
+    # 3) chèn tone vào silent 50ms để thành watermark block
+    wm_block = AudioSegment.silent(duration=50).overlay(tone)
+    # 4) overlay watermark block nhiều lần theo độ dài payload
+    for _ in range(len(payload)):
+        audio = audio.overlay(wm_block, position=0)
+    # 5) xuất lại MP3
+    out = BytesIO()
+    audio.export(out, format="mp3")
+    return out.getvalue()
 # ---------------------------------------------------------------------------
 # 1. DB & Vault
 # ---------------------------------------------------------------------------
@@ -130,16 +147,24 @@ def upload():
     if not data:
         abort(400, 'File rỗng')
 
+    # 4.1) Gắn watermark (dùng username để làm payload)
+    try:
+        data = embed_watermark(data, session['username'])
+    except Exception:
+        current_app.logger.exception('Embed watermark thất bại')
+        abort(500, 'Lỗi xử lý watermark')
+
     # 5) Xác thực thực sự là MP3
     try:
         audio = MP3(BytesIO(data))
         title  = str(audio.tags.get('TIT2', filename))
-        artist = str(audio.tags.get('TPE1', ''))
+        # Lấy artist từ session, không dùng tag MP3
+        artist = session.get('username', '')
         length = int(audio.info.length)
     except HeaderNotFoundError:
         abort(400, 'Không phải file MP3 hợp lệ')
     except Exception:
-        title, artist, length = filename, '', 0
+        title, artist, length = filename, session.get('username', ''), 0
 
     # 6) Tạo AES-GCM key + nonce
     aes_key = AESGCM.generate_key(bit_length=128)
