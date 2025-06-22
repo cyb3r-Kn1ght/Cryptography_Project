@@ -22,6 +22,9 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from Crypto.Cipher import AES  # NEW: for AES‑CTR streaming
 import hvac
+import hashlib
+import numpy as np
+
 
 # ---------------------------------------------------------------------------
 # 0. Init
@@ -31,6 +34,11 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 ALLOWED_EXTENSIONS = {'mp3'}
+FRAME = 512          # samples / block
+FS    = 44100
+K1    = int(15000 / FS * FRAME)   # ≈ 15 kHz bin
+K2    = int(17000 / FS * FRAME)   # ≈ 17 kHz bin
+DELTA = 10 ** (-34/20)           # -18 dB
 FILENAME_RE = re.compile(r'^[A-Za-z0-9_-]+$')
 
 # Cac ham tang cuong bao mat
@@ -39,21 +47,43 @@ def allowed_file(filename):
         '.' in filename and
         filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
     )
-def embed_watermark(mp3_bytes: bytes, payload: str) -> bytes:
-    # 1) decode MP3 → PCM
+def _payload_bits(user_id: str):
+    digest = hashlib.sha256(user_id.encode()).digest()  # 256 bit
+    for b in digest:
+        for i in range(8):
+            yield (b >> i) & 1
+
+def embed_watermark(mp3_bytes: bytes, user_id: str) -> bytes:
+    """
+    Nhúng watermark gắn với user_id bằng cách chỉnh biên độ 2 hệ số FFT (15 & 17 kHz).
+    Trả lại bytes MP3 mới (192 kbps).
+    """
     audio = AudioSegment.from_file(BytesIO(mp3_bytes), format="mp3")
-    # 2) tạo tone 19kHz (duration 800ms) + giảm gain
-    tone = Sine(19000).to_audio_segment(duration=800).apply_gain(-30)
-    # 3) chèn tone vào silent 50ms để thành watermark block
-    wm_block = AudioSegment.silent(duration=50).overlay(tone)
-    # 4) overlay watermark block nhiều lần theo độ dài payload
-    for _ in range(len(payload)):
-        audio = audio.overlay(wm_block, position=0)
-    # 5) xuất lại MP3
+    samples = np.array(audio.get_array_of_samples(), dtype=np.float32)
+
+    total_blocks = len(samples) // FRAME
+    for blk, bit in zip(range(total_blocks), _payload_bits(user_id)):
+        start, end = blk * FRAME, (blk + 1) * FRAME
+        block = np.fft.rfft(samples[start:end])
+        if len(block) <= max(K1, K2):          # bảo vệ array nhỏ
+            break
+        # áp đặt quan hệ biên độ để mang bit
+        if bit == 1 and np.abs(block[K1]) <= np.abs(block[K2]):
+            block[K1] = block[K2] * (1 + DELTA)
+        elif bit == 0 and np.abs(block[K2]) <= np.abs(block[K1]):
+            block[K2] = block[K1] * (1 + DELTA)
+        samples[start:end] = np.fft.irfft(block, n=FRAME)
+
+    int16 = np.clip(samples, -32768, 32767).astype(np.int16)
+    wm_audio = AudioSegment(
+        int16.tobytes(),
+        frame_rate=audio.frame_rate,
+        sample_width=2,
+        channels=audio.channels,
+    )
     out = BytesIO()
-    audio.export(out, format="mp3")
-    return out.getvalue()
-# ---------------------------------------------------------------------------
+    wm_audio.export(out, format="mp3", bitrate="192k")
+    return out.getvalue()# ---------------------------------------------------------------------------
 # 1. DB & Vault
 # ---------------------------------------------------------------------------
 DB_URL = os.getenv("DB_URL")
@@ -116,103 +146,63 @@ def index():
         files = [r[0] for r in c.execute(text('SELECT filename FROM songs ORDER BY id'))]
     return render_template('index.html', music_files=files, role=session.get('role'))
 
-@app.route('/upload', methods=['GET', 'POST'])
+@app.route("/upload", methods=["GET", "POST"])
 def upload():
-    # 0) Chỉ artist mới được phép
-    if session.get('role') != 'artist':
+    # 0) Chỉ nghệ sĩ
+    if session.get("role") != "artist":
         abort(403)
 
-    # 1) GET: trả form
-    if request.method == 'GET':
-        return render_template('upload.html')
+    if request.method == "GET":
+        return render_template("upload.html")
 
-    # 2) POST: nhận file
-    file = request.files.get('file')
-    if not file:
-        abort(400, 'Không có file được gửi lên')
-    if file.filename == '':
-        abort(400, 'Chưa chọn file')
+    # 1) Nhận file
+    file = request.files.get("file")
+    if not file or file.filename == "":
+        abort(400, "Chưa chọn file")
     if not allowed_file(file.filename):
-        abort(400, 'Chỉ cho phép .mp3')
+        abort(400, "Chỉ cho phép .mp3")
 
-    # 3) Sanitize tên file để tránh path traversal
+    # 2) Xử lý tên
     filename = secure_filename(file.filename)
-    if filename == '':
-        abort(400, 'Tên file không hợp lệ')
-    key_id = filename.rsplit('.', 1)[0]
+    key_id   = filename.rsplit(".", 1)[0]
     if not FILENAME_RE.match(key_id):
-        abort(400, 'Tên file chỉ được chứa chữ, số, "_" và "-"')
+        abort(400, "Tên file không hợp lệ")
 
-    # 4) Đọc nội dung và kiểm tra không rỗng
+    # 3) Đọc nội dung
     data = file.read()
     if not data:
-        abort(400, 'File rỗng')
+        abort(400, "File rỗng")
 
-    # 4.1) Gắn watermark (dùng username để làm payload)
+    # 4) Lấy metadata MP3
     try:
-        data = embed_watermark(data, session['username'])
-    except Exception:
-        current_app.logger.exception('Embed watermark thất bại')
-        abort(500, 'Lỗi xử lý watermark')
-
-    # 5) Xác thực thực sự là MP3
-    try:
-        audio = MP3(BytesIO(data))
-        title  = str(audio.tags.get('TIT2', filename))
-        # Lấy artist từ session, không dùng tag MP3
-        artist = session.get('username', '')
+        audio  = MP3(BytesIO(data))
+        title  = str(audio.tags.get("TIT2", filename))
         length = int(audio.info.length)
     except HeaderNotFoundError:
-        abort(400, 'Không phải file MP3 hợp lệ')
-    except Exception:
-        title, artist, length = filename, session.get('username', ''), 0
+        abort(400, "MP3 lỗi")
+    artist = session["username"]
 
-    # 6) Tạo AES-GCM key + nonce
+    # 5) Mã hoá AES-GCM
     aes_key = AESGCM.generate_key(bit_length=128)
     nonce   = os.urandom(12)
+    vault.secrets.kv.v2.create_or_update_secret(
+        path=f"music/{key_id}", mount_point="secret",
+        secret={"key": aes_key.hex(), "nonce": nonce.hex()}
+    )
+    aesgcm = AESGCM(aes_key)
+    enc    = aesgcm.encrypt(nonce, data, None)
+    ciphertext, tag = enc[:-16], enc[-16:]
 
-    # 7) Lưu vào Vault
-    try:
-        vault.secrets.kv.v2.create_or_update_secret(
-            path=f"music/{key_id}",
-            mount_point='secret',
-            secret={'key': aes_key.hex(), 'nonce': nonce.hex()}
-        )
-    except Exception:
-        current_app.logger.exception('Vault write failed')
-        abort(500, 'Lỗi lưu key vào Vault')
+    # 6) Ghi DB + khởi tạo song_stats
+    with engine.begin() as con:
+         con.execute(text("INSERT INTO songs (filename,title,artist,length,aes_key_id,nonce,tag,encrypted_data) VALUES (:f,:t,:a,:l,:kid,:n,:tag,:edata)"),
+                     {"f": filename, "t": title, "a": artist, "l": length, "kid": key_id, "n": nonce, "tag": tag, "edata": ciphertext})
+         song_id = con.execute(text("SELECT id FROM songs WHERE filename=:f"), {"f": filename}).scalar()
+         con.execute(text("INSERT INTO song_stats (song_id) VALUES (:sid) ON CONFLICT DO NOTHING"),
+                     {"sid": song_id})
 
-    # 8) Mã hóa MP3
-    aesgcm     = AESGCM(aes_key)
-    encrypted  = aesgcm.encrypt(nonce, data, None)
-    ciphertext = encrypted[:-16]   # bỏ tag
-    tag        = encrypted[-16:]
+    return f"✅ Đã upload & lưu: {filename}", 201
 
-    # 9) Ghi metadata + ciphertext vào DB
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("""
-                INSERT INTO songs
-                  (filename, title, artist, length,
-                   aes_key_id, nonce, tag, encrypted_data)
-                VALUES
-                  (:filename, :title, :artist, :length,
-                   :aes_key_id, :nonce, :tag, :encrypted_data)
-            """), {
-                'filename': filename,
-                'title':    title,
-                'artist':   artist,
-                'length':   length,
-                'aes_key_id': key_id,
-                'nonce':      nonce,
-                'tag':        tag,
-                'encrypted_data': ciphertext
-            })
-    except Exception:
-        current_app.logger.exception('DB write failed')
-        abort(500, 'Lỗi lưu vào cơ sở dữ liệu')
-
-    return f'✅ Đã upload & lưu: {filename}', 201
 
 # ---------------------------------------------------------------------------
 # 4. AES‑GCM (preview) route – vẫn giữ để test
@@ -256,38 +246,43 @@ def get_plaintext_from_db(filename: str) -> bytes:
 # ---------------------------------------------------------------------------
 # 6. AES‑CTR streaming endpoint (chunked)
 # ---------------------------------------------------------------------------
-@app.route('/stream/<filename>')
+@app.route("/stream/<filename>")
 def stream_music(filename):
-    if 'shared_secret' not in session:
-        return 'Key‑exchange required', 401
+    if "shared_secret" not in session:
+        return "Key-exchange required", 401
 
     try:
         pt = get_plaintext_from_db(filename)
     except FileNotFoundError:
-        return 'Not Found', 404
+        return "Not Found", 404
 
-    # key = derive_aesctr_key(bytes.fromhex(session['shared_secret']))  # 32‑byte
+    # watermark forensic
+    try:
+        pt = embed_watermark(pt, session["username"])
+    except Exception:
+        current_app.logger.exception("Watermark failed")
 
-    # def gen():
-    #     CHUNK = 64 * 1024
-    #     for idx, off in enumerate(range(0, len(pt), CHUNK)):
-    #         plain_chunk = pt[off:off+CHUNK]
-    #         iv = b'\x00' * 8 + idx.to_bytes(8, 'big')
-    #         nonce = iv[:8]
-    #         initval = int.from_bytes(iv[8:], byteorder='big')
-    #         cipher = AES.new(key, AES.MODE_CTR, nonce=nonce, initial_value=initval)
-    #         yield idx.to_bytes(8, 'big') + cipher.encrypt(plain_chunk)
-    master_key = derive_aesctr_key(bytes.fromhex(session['shared_secret']))
+    master_key = derive_aesctr_key(bytes.fromhex(session["shared_secret"]))
+
     def gen():
         CHUNK = 64 * 1024
         for idx, off in enumerate(range(0, len(pt), CHUNK)):
-            chunk = pt[off:off+CHUNK]
-            subkey = derive_subkey(master_key, idx)
-            iv   = b'\x00'*8
-            init = idx
-            cipher = AES.new(subkey, AES.MODE_CTR, nonce=iv, initial_value=init)
-            yield idx.to_bytes(8, 'big') + cipher.encrypt(chunk)
-    return Response(gen(), mimetype='application/octet-stream')
+            chunk = pt[off:off + CHUNK]
+            nonce = os.urandom(8)
+            subkey = derive_subkey(master_key, idx, nonce)
+            cipher = AES.new(subkey, AES.MODE_CTR, nonce=nonce, initial_value=0)
+            yield nonce + idx.to_bytes(8, "big") + cipher.encrypt(chunk)
+
+        # tăng play_count + revenue
+        with engine.begin() as con:
+            con.execute(text("""
+                UPDATE song_stats
+                   SET play_count = play_count + 1,
+                       revenue    = revenue + 0.005
+                 WHERE song_id = (SELECT id FROM songs WHERE filename = :fn)
+            """), {"fn": filename})
+
+    return Response(gen(), mimetype="application/octet-stream")
 # ---------------------------------------------------------------------------
 # 7. ECDH key‑exchange endpoints
 # ---------------------------------------------------------------------------

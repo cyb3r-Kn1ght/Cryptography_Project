@@ -95,16 +95,14 @@ def derive_aesctr_key(shared_secret: bytes) -> bytes:
 
 CHUNK_SALT = b"chunk-salt"
 
-def derive_subkey(master_key: bytes, idx: int) -> bytes:
-    """
-    Sinh subkey cho chunk thứ idx từ master_key bằng HKDF-SHA256.
-    master_key: 32-byte AES-CTR master key.
-    idx: chỉ số chunk.
-    """
-    hkdf = HKDF(
+def derive_subkey(master_key: bytes, index: int, nonce: bytes) -> bytes:
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    from cryptography.hazmat.primitives import hashes
+
+    info = b'chunk-' + index.to_bytes(8, 'big') + nonce
+    return HKDF(
         algorithm=hashes.SHA256(),
         length=32,
-        salt=CHUNK_SALT,
-        info=f"chunk-{idx}".encode(),
-    )
-    return hkdf.derive(master_key)
+        salt=CHUNK_SALT,          # <── thay None bằng hằng cố định
+        info=info,
+    ).derive(master_key)
